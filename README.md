@@ -67,6 +67,15 @@ sbt onigurumaJS/test          # Scala.js tests
 sbt onigurumaNative/test      # Scala Native tests
 ```
 
+### Scala Native version
+
+The published Native artifact is built against **`sbt-scala-native` 0.5.11**
+(and uses 0.5.11's `javalib`, which references symbols like
+`java.lang.AbstractStringBuilder` that aren't present in 0.5.10's
+`javalib`). A downstream library pinned to 0.5.10 that consumes
+oniguruma will fail to link with a `"Bad symbolic reference"` error
+— bump the consumer to 0.5.11 to resolve.
+
 ## Regenerating the corpus
 
 The corpus lives at `jvm/src/test/resources/textmate-corpus.txt`. To
