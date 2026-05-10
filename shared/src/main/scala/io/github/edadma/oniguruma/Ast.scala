@@ -140,7 +140,7 @@ object Flags:
 
   /** `(?m)` in Onig's default flavor — "dot-matches-newline". (Java's `m`
     * flag is what we call [[MultiLine]] below; the parser disambiguates
-    * based on the active syntax flavor before raising a [[FlagsScope]].) */
+    * based on the active syntax flavor before raising a [[Node.FlagsScope]].) */
   val DotAll: Flags = 1 << 1
 
   /** `(?x)` — extended mode: ignore whitespace and `# comments`. */

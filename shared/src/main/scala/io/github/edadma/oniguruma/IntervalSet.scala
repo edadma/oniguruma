@@ -13,7 +13,8 @@ import scala.annotation.tailrec
   * Ranges are stored as a `Vector[(Int, Int)]` of inclusive `(lo, hi)`
   * pairs, sorted by `lo`, with no two pairs adjacent (`hi(i)+1 < lo(i+1)`)
   * and no two overlapping. The constructor enforces the invariant; any
-  * factory that takes user-supplied input runs it through [[normalize]].
+  * factory that takes user-supplied input runs it through the companion's
+  * private `normalize` helper (sort, merge overlapping, fuse adjacent).
   *
   * The "universe" of codepoints is `[0, 0x10FFFF]` — the Unicode scalar
   * range. Surrogate codepoints `0xD800..0xDFFF` are valid members of an

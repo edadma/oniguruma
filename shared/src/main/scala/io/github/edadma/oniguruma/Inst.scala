@@ -4,11 +4,12 @@ package io.github.edadma.oniguruma
   * classic Pike/Cox style — `Char` / `Split` / `Jmp` / `Match` — extended
   * with `Save` for capture endpoints and an explicit `Atomic*` pair so
   * possessive quantifiers and `(?>…)` groups can clear their backtracks
-  * on commit. Stage 4 added [[LookaroundEnter]] / [[LookaroundExit]] for
-  * lookaround assertions, [[Backref]] for `\1` / `\k<name>` back-references,
-  * and [[AnyCharIncludingNewline]] / [[CharIgnoreCase]] to carry the
-  * `(?s)` and `(?i)` runtime-flag adjustments. Stage 5 added [[Call]] for
-  * subroutine calls (`\g<n>`, `\g<name>`, `\g<0>`).
+  * on commit. Stage 4 added [[Inst.LookaroundEnter]] / [[Inst.LookaroundExit]]
+  * for lookaround assertions, [[Inst.Backref]] for `\1` / `\k<name>`
+  * back-references, and [[Inst.AnyCharIncludingNewline]] /
+  * [[Inst.CharIgnoreCase]] to carry the `(?s)` and `(?i)` runtime-flag
+  * adjustments. Stage 5 added [[Inst.Call]] for subroutine calls
+  * (`\g<n>`, `\g<name>`, `\g<0>`).
   *
   * Instructions are addressed by their index in [[Program.code]]. `Split`,
   * `Jmp`, and `LookaroundEnter` carry absolute targets — the compiler
