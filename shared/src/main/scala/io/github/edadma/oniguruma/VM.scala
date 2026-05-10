@@ -87,6 +87,18 @@ final class VM(program: Program):
       successInst: Inst,
       requireEndAt: Option[Int],
   ): Option[(Array[Int], Int)] =
+    // Check the JVM interrupt flag at every entry. The in-loop poll
+    // below only fires every 65k bytecode steps, which is fine for
+    // ONE long match — but callers that drive the engine in a
+    // many-small-calls pattern (TextMate tokenizers calling
+    // `matchAt` at every input position, for example) typically
+    // average well under 65k steps per call. Without this entry-
+    // point check the interrupt flag stays set across many runOne
+    // calls and never gets consumed. Polling here makes the
+    // cancellation surface latency-bounded by the duration of one
+    // call instead of one in-loop poll interval.
+    if Thread.interrupted() then
+      throw new InterruptedException("oniguruma VM interrupted")
     val slots        = Array.fill(slotN)(-1)
     val choiceStack  = mutable.ArrayBuffer.empty[VM.Choice]
     val atomicStack  = mutable.ArrayBuffer.empty[Int]
