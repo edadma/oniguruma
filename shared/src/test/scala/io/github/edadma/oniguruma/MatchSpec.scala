@@ -286,8 +286,15 @@ class MatchSpec extends CompilerHelpers:
       compileFail("\\g<-1>") should include("before group 1")
     }
 
-    "backreference to undefined group is rejected" in {
-      compileFail("\\1") should include("undefined group")
+    "backreference to a group beyond the declared count always fails at runtime" in {
+      // Bug 2 from the downstream corpus: Onig accepts `\N` for any
+      // positive `N` and treats out-of-range as "uncaptured group →
+      // always fail" at runtime. Verified end-to-end: `(\3)|abc` —
+      // the first alt always falls through to the second because `\3`
+      // can never match (group 3 doesn't exist).
+      val m = re("(\\3)|abc").findFirstMatchIn("abc").get
+      m.matched shouldBe "abc"
+      m.group(1) shouldBe None
     }
 
     "subroutine call to undefined group is rejected" in {

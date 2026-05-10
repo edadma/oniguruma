@@ -122,8 +122,12 @@ class ParseBackrefSpec extends ParserHelpers:
 
     "\\k<-1> with no surrounding groups is rejected at parse time" in {
       // groupCounter = 0 → -1 resolves to group 0, which doesn't exist.
-      // The parser catches this directly rather than letting the
-      // compiler wave it through as "undefined group".
+      // The parser catches this directly. (Note: a forward absolute
+      // backref like `\3` against captureCount=0 is NOT rejected — the
+      // compiler emits a Backref to an out-of-range slot and the VM
+      // treats it as an always-fail uncaptured group. Relative refs
+      // are different: a negative offset that lands on group 0 has no
+      // self-consistent interpretation, so the parser rejects it.)
       failParse("\\k<-1>").message should include("before group 1")
     }
 

@@ -65,14 +65,50 @@ class CompileBackrefSpec extends CompilerHelpers:
     }
   }
 
-  "errors" - {
+  "out-of-range numeric refs (Onig-compat: always-fail at runtime)" - {
 
-    "undefined numeric ref is rejected" in {
-      compileFail("\\1") should include("undefined group")
+    // Real Oniguruma C accepts `\N` for any positive `N`, with the
+    // runtime semantic of "behave like an uncaptured group" when the
+    // referenced group doesn't exist. Several TextMate grammars rely
+    // on this — `(\3)|(?=$|*/)` has only one group but uses `\3` as
+    // a guaranteed never-match in the first alt arm. We compile the
+    // backref normally; the VM's bounds check handles the runtime
+    // miss.
+
+    "undefined numeric ref compiles cleanly (no decl, captureCount=0)" in {
+      // captureCount=0 so the slot array is sized 2 (slots for group 0
+      // only). The backref points at slot 2, which the VM treats as
+      // out-of-range → backtrack.
+      compile("\\1").code shouldBe Vector(
+        Save(0),
+        Backref(2, ignoreCase = false),
+        Save(1),
+        Match,
+      )
     }
 
-    "backref past the declared count is rejected" in {
-      compileFail("(a)\\2") should include("undefined group")
+    "backref past the declared count compiles cleanly" in {
+      compile("(a)\\2").code shouldBe Vector(
+        Save(0),
+        Save(2),
+        Char('a'.toInt),
+        Save(3),
+        Backref(4, ignoreCase = false), // slot 4 is past the slot array
+        Save(1),
+        Match,
+      )
+    }
+  }
+
+  "errors" - {
+
+    "ref to group 0 via \\k<0> is rejected" in {
+      // `\k<0>` would refer to the whole-match range; the VM's slot
+      // 0/1 are still being written when the backref evaluates. We
+      // follow Onig in rejecting it. (`\0` itself is parsed as the
+      // literal NUL byte, not a backref, so it doesn't reach this
+      // check.)
+      compileFail("\\k<0>") should include("invalid group number")
     }
 
     "undefined named ref is rejected" in {

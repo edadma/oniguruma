@@ -30,7 +30,7 @@ class ParseCorpusSpec extends AnyFreeSpec with Matchers:
       val (oks, errs) = patterns.partition(p => Parser.parseRegex(p).isRight)
       val rate        = oks.size.toDouble / patterns.size
 
-      info(s"parsed ${oks.size} / ${patterns.size} (${(rate * 100).formatted("%.2f")}%)")
+      info(s"parsed ${oks.size} / ${patterns.size} (${"%.2f".format(rate * 100)}%)")
 
       // Group failures by error message, show the top 10 to ease diagnosis.
       val grouped = errs

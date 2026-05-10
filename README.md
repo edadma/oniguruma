@@ -10,10 +10,8 @@ for the JVM, Scala.js, and Scala Native.
 
 **Working** end-to-end. The engine parses, compiles, and matches every
 feature on the must-support list below. The 36-grammar TextMate corpus
-compiles at 99.3% (3394 / 3418 patterns; the remaining 25 are pattern
-fragments that grammars splice together with other regexes — not engine
-bugs), and 100% of the compiled patterns survive a smoke-run through
-the VM without throwing.
+compiles at **100.0%** (3418 / 3418 patterns), and 100.0% of the
+compiled patterns survive a smoke-run through the VM without throwing.
 
 Stage roadmap:
 
@@ -25,8 +23,11 @@ Stage roadmap:
 | 4 | Lookaround + atomic + possessive + backrefs + `\G` + inline flags | done |
 | 5 | Subroutines + recursion + UCD `\p{L,M,N,Print}` + grammar validation | done |
 | 6.A | `TmScanner` multi-pattern driver (TextMate-grammar-shaped API) | done |
+| 6.B | Capture propagation through positive lookaround | done |
 | 6.C | Relative refs (`\k<-N>`, `\g<+N>`) resolved at parse time | done |
-| 6.B / 6.D / 6.E | Optional follow-ups (lookaround capture propagation, empty-body progress, Onig-classic `\g<n>` capture semantics) | — |
+| 6.D | Empty-body loop progress tracking (replaces 10M `StepLimit` blunt cap) | done |
+| 6.E | Onig-classic `\g<n>` capture semantics | optional (only on demand) |
+| 6.F | Out-of-range numeric backrefs accepted at parse, always-fail at runtime (Onig-compat) | done |
 
 ## Scope
 
@@ -44,7 +45,7 @@ patterns and is bundled as a JVM test resource for validation.
 - char classes, POSIX brackets (`[[:alpha:]]` etc.), shorthands (`\d \w \s \h`)
 - anchors: `^ $ \A \z \Z \G \b \B`
 - subroutines: `\g<name>`, `\g<n>`, `\g<0>` (whole-pattern recursion)
-- backrefs: `\1`-`\9`, `\k<name>`, `\k<n>`, `\k<-1>` (relative)
+- backrefs: `\N` (any positive N), `\k<name>`, `\k<n>`, `\k<-1>` (relative); out-of-range numeric refs compile cleanly and behave as Onig's "always-fail uncaptured group" at runtime
 - inline flags `(?i:…)`, `(?im-x:…)`, comments `(?#…)`
 - Unicode properties: `\p{L}`, `\p{M}`, `\p{N}`, `\p{Print}`, plus `\P{…}` negation
 

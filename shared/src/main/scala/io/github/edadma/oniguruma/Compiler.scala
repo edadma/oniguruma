@@ -358,11 +358,24 @@ private final class Compiler(captureCount: Int, namedGroups: Map[String, List[In
 
   // -- backreferences --
 
-  /** Lower a `\1` / `\k<name>` backreference. Numeric refs are
-    * validated against the running capture count; named refs resolve
+  /** Lower a `\1` / `\k<name>` backreference. Named refs resolve
     * through [[namedGroups]]. The branch-reset case (one name → many
     * indices) lowers to an alternation of single-slot backrefs so the
     * VM can pick whichever matched.
+    *
+    * Numeric refs are NOT validated against the running capture count.
+    * Oniguruma C accepts `\N` for any positive `N`, with a runtime
+    * semantic of "behave like an uncaptured group" (i.e. always
+    * backtrack) when the referenced group doesn't exist in the
+    * pattern. Several real TextMate grammars rely on this: a pattern
+    * like `(\3)|FALLBACK` has only one group but uses `\3` as a
+    * guaranteed never-match in the first arm, so the alt always
+    * falls through to the second. The VM's `Backref` case
+    * bounds-checks the slot index against the actual slot-array
+    * size and treats out-of-range as uncaptured. We still reject
+    * `n < 1` because group 0 is the whole-match: `\0` would mean
+    * "match what I've matched so far", which has no well-defined
+    * semantics here.
     *
     * Relative refs (`\k<-1>` / `\k<+2>`) are resolved to absolute
     * `ByNumber` by the parser, so the [[GroupRef.ByRelative]] arm here
@@ -371,8 +384,8 @@ private final class Compiler(captureCount: Int, namedGroups: Map[String, List[In
     val ic = Flags.has(flags, Flags.IgnoreCase)
     ref match
       case GroupRef.ByNumber(n) =>
-        if n < 1 || n > captureCount then
-          fail(s"backreference to undefined group: \\$n (only $captureCount declared)")
+        if n < 1 then
+          fail(s"backreference to invalid group number: \\$n")
         emit(Backref(2 * n, ic))
       case GroupRef.ByName(name) =>
         namedGroups.get(name) match

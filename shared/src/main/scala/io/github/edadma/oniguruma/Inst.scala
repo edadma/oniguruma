@@ -76,9 +76,12 @@ object Inst:
 
   /** Open a lookaround assertion. Runs the sub-program at `pc+1` up to
     * the matching [[LookaroundExit]] at `exitPc` in a fresh VM state
-    * (own choice / atomic stacks; sp restored on completion). Captures
-    * inside the lookaround are discarded — Stage 4 keeps capture
-    * propagation out of scope.
+    * (own choice / atomic stacks; sp restored on completion). On
+    * success of a POSITIVE lookaround, any captures the sub-run wrote
+    * (slot value `>= 0`) are merged back into the parent's slot array;
+    * untouched slots leave the parent's existing value alone
+    * (Stage 6.B). Negative lookaround never propagates: it succeeds on
+    * the sub-run's failure, so there are no captures to take.
     *
     * On the parent VM:
     *   - `forward = true`: run the sub-program at the parent's current

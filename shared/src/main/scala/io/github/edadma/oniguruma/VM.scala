@@ -42,16 +42,24 @@ import scala.collection.mutable
   * of a partial subroutine match unwinds frames cleanly. A recursion
   * cap on the IP stack prevents `\g<0>`-style infinite recursion.
   *
-  * The [[StepLimit]] ceiling is a defensive guard against patterns
-  * that could otherwise loop forever on an empty-body match (`(a*)*`
-  * style). Proper progress tracking remains an open follow-up. */
+  * Stage 6.D added empty-body progress tracking. Each [[runOne]] keeps
+  * a `splitLastSp` array sized to the program length: when execution
+  * arrives at a `Split` whose pc was last visited at exactly the
+  * current `sp`, the loop body must have made no progress on the
+  * previous iteration, so the VM backtracks immediately instead of
+  * retaking the loop arm. That collapses `(a*)*` against `"a"` from
+  * the old 10M-step `StepLimit` ceiling to O(input length) steps, and
+  * — being a per-Split check — has zero overhead for patterns that
+  * actually advance. The [[StepLimit]] ceiling remains as a defensive
+  * backstop for any pathology the progress check misses. */
 final class VM(program: Program):
 
   import Inst.*
 
-  /** Maximum number of bytecode steps before the VM gives up. Patterns
-    * that would otherwise loop indefinitely (the empty-body-loop
-    * pathology) bail out cleanly with `None`. */
+  /** Defensive ceiling on bytecode steps per [[runOne]]. With Stage 6.D
+    * progress tracking the empty-body pathology is no longer the path
+    * here — but the limit stays in place to catch any future bug or
+    * adversarial input that slips past the per-Split check. */
   private val StepLimit: Int = 10_000_000
 
   /** Maximum subroutine-call recursion depth. Keeps `\g<0>` against
@@ -104,6 +112,25 @@ final class VM(program: Program):
     val atomicStack  = mutable.ArrayBuffer.empty[Int]
     val ipStack      = mutable.ArrayBuffer.empty[VM.IpFrame]
     val len          = input.length
+
+    // Per-Split last-visit-sp memo. `splitLastSp(pc) == sp` at dispatch
+    // means we've already executed this Split at this exact offset and
+    // came back without consuming input — i.e. the loop body around
+    // this Split is a zero-width body, the classic `(a*)*` pathology.
+    // The check fires immediately at the second arrival (no Choice is
+    // pushed twice on top of itself), so the loop terminates in O(n)
+    // steps instead of hitting `StepLimit`.
+    //
+    // We do NOT snapshot this on Choice push or restore it on
+    // backtrack. The map's invariant is just "latest sp at which we
+    // executed this Split"; backtracking that lowers sp simply leaves
+    // a stale higher value behind, which never falsely fires the check
+    // (different sp → proceed). The next legitimate visit at a
+    // different sp overwrites it.
+    //
+    // The "-2" sentinel marks "never visited" — distinct from any
+    // valid `sp` value, which is always `>= 0`.
+    val splitLastSp = Array.fill(program.code.length)(-2)
 
     var pc        = startPc
     var sp        = startSp
@@ -242,8 +269,17 @@ final class VM(program: Program):
             pc = target
 
           case Split(prefer, alt) =>
-            choiceStack += VM.Choice(alt, sp, slots.clone(), atomicStack.size, ipStack.toArray)
-            pc = prefer
+            // Stage 6.D progress check: if we've executed this Split at
+            // exactly this sp before, the loop body must have looped back
+            // without consuming input — fail this Split (the pushed
+            // Choice from the FIRST visit is still on the stack and will
+            // carry the matcher into the skip arm via backtracking).
+            if splitLastSp(pc) == sp then
+              backtrack()
+            else
+              splitLastSp(pc) = sp
+              choiceStack += VM.Choice(alt, sp, slots.clone(), atomicStack.size, ipStack.toArray)
+              pc = prefer
 
           case AtomicMark =>
             atomicStack += choiceStack.size
@@ -260,17 +296,27 @@ final class VM(program: Program):
             // slot+1 is the end. An unmatched group fails the backref.
             // A captured-empty group (start == end) succeeds with no
             // input consumed.
-            val gStart = slots(slot)
-            val gEnd   = slots(slot + 1)
-            if gStart < 0 || gEnd < 0 then
+            //
+            // A slot index BEYOND the slot-array length means the
+            // referenced group number is larger than `captureCount`
+            // for this pattern — `(\3)|...` and similar idioms from
+            // the TextMate grammar corpus. Oniguruma accepts these
+            // at parse time and behaves as "always fail" at runtime;
+            // we mirror that by treating out-of-range as uncaptured.
+            if slot + 1 >= slots.length then
               backtrack()
-            else if gStart == gEnd then
-              pc += 1
-            else if matchSubstring(input, sp, gStart, gEnd, ignoreCase) then
-              sp += (gEnd - gStart)
-              pc += 1
             else
-              backtrack()
+              val gStart = slots(slot)
+              val gEnd   = slots(slot + 1)
+              if gStart < 0 || gEnd < 0 then
+                backtrack()
+              else if gStart == gEnd then
+                pc += 1
+              else if matchSubstring(input, sp, gStart, gEnd, ignoreCase) then
+                sp += (gEnd - gStart)
+                pc += 1
+              else
+                backtrack()
 
           case Call(entryPc, leaveAt) =>
             // Subroutine call — push a frame and jump into the target
@@ -286,17 +332,33 @@ final class VM(program: Program):
 
           case LookaroundEnter(forward, negative, exitPc) =>
             // Spawn a sub-run that looks for `LookaroundExit` as its
-            // success terminator. Captures inside the sub-run are
-            // discarded: lookarounds are zero-width on the parent.
-            val ok =
+            // success terminator. The parent's `sp` stays put either
+            // way — lookarounds are zero-width.
+            //
+            // Stage 6.B: on success of a POSITIVE lookaround, merge
+            // the sub-run's captures into the parent's slots. Group
+            // slots the sub-run actually wrote (slot value `>= 0`)
+            // overwrite the parent's; slots the sub-run never touched
+            // leave the parent's value alone. Negative lookarounds
+            // never propagate — they succeed on the sub-run's failure,
+            // so there's no captured state to take.
+            val subSlots =
               if forward then
                 runOne(input, prevMatchEnd,
                        startPc = pc + 1, startSp = sp,
                        successInst = LookaroundExit,
-                       requireEndAt = None).isDefined
+                       requireEndAt = None).map(_._1)
               else
                 lookbehindMatch(input, prevMatchEnd, subStartPc = pc + 1, parentSp = sp)
+            val ok = subSlots.isDefined
             if ok != negative then
+              if !negative then
+                subSlots.foreach { arr =>
+                  var i = 0
+                  while i < slotN do
+                    if arr(i) >= 0 then slots(i) = arr(i)
+                    i += 1
+                }
               pc = exitPc + 1
             else
               backtrack()
@@ -323,6 +385,11 @@ final class VM(program: Program):
     * boundary `i` from 0 up to `parentSp` inclusive, and succeed when
     * one of those starts ends exactly at `parentSp`.
     *
+    * Returns `Some(slots)` with the sub-run's slot array on success
+    * so the caller can merge captures back into the parent (Stage 6.B
+    * positive-lookaround propagation). `None` means no start position
+    * yielded a match ending at `parentSp`.
+    *
     * This is the slow-but-correct algorithm — O(parentSp ×
     * subProgramSteps). The faster approach (compile a reverse-direction
     * sub-program) waits for a Stage 5+ rewrite. For the 36-grammar
@@ -333,35 +400,35 @@ final class VM(program: Program):
       prevMatchEnd: Int,
       subStartPc: Int,
       parentSp: Int,
-  ): Boolean =
+  ): Option[Array[Int]] =
     var i       = 0
-    var matched = false
+    var result: Option[Array[Int]] = None
     var loop    = true
     while loop do
-      if runOne(input, prevMatchEnd,
-                startPc = subStartPc, startSp = i,
-                successInst = LookaroundExit,
-                requireEndAt = Some(parentSp)).isDefined
-      then
-        matched = true
-        loop    = false
-      else if i >= parentSp then
-        loop = false
-      else
-        // Step forward one codepoint. If we'd overshoot `parentSp`, we
-        // still want to test `i == parentSp` (zero-length lookbehind),
-        // which the previous iteration already covered when i started
-        // at parentSp.
-        val cp = Character.codePointAt(input, i)
-        val w  = Character.charCount(cp)
-        if i + w > parentSp then
-          // The next codepoint starts at i but would extend past
-          // parentSp; advance i straight to parentSp so the next round
-          // tries the zero-width-at-parentSp case explicitly.
-          i = parentSp
-        else
-          i += w
-    matched
+      runOne(input, prevMatchEnd,
+             startPc = subStartPc, startSp = i,
+             successInst = LookaroundExit,
+             requireEndAt = Some(parentSp)) match
+        case Some((slots, _)) =>
+          result = Some(slots)
+          loop   = false
+        case None =>
+          if i >= parentSp then loop = false
+          else
+            // Step forward one codepoint. If we'd overshoot `parentSp`, we
+            // still want to test `i == parentSp` (zero-length lookbehind),
+            // which the previous iteration already covered when i started
+            // at parentSp.
+            val cp = Character.codePointAt(input, i)
+            val w  = Character.charCount(cp)
+            if i + w > parentSp then
+              // The next codepoint starts at i but would extend past
+              // parentSp; advance i straight to parentSp so the next round
+              // tries the zero-width-at-parentSp case explicitly.
+              i = parentSp
+            else
+              i += w
+    result
 
   /** ASCII-fold-aware substring match. Returns true iff `input[sp..]`
     * begins with the same sequence as `input[gStart..gEnd)`, comparing

@@ -129,4 +129,77 @@ class MatchBackrefSpec extends CompilerHelpers:
     }
   }
 
+  "backrefs beyond the declared count (Onig-compat, downstream Bug 2)" - {
+
+    // Real Oniguruma C compiles `\N` for any positive `N`, with the
+    // runtime semantic of "treat as an uncaptured group" when the
+    // referenced number is out of range. Several TextMate grammars
+    // rely on this — `(\3)|...` uses `\3` as a guaranteed never-match
+    // marker so the alt always falls through to its second arm.
+    //
+    // The compile-side test lives in CompileBackrefSpec (instruction
+    // shape with an out-of-range slot index); this section pins the
+    // end-to-end runtime behaviour.
+
+    "(\\3)|abc — out-of-range backref falls through to the second alt" in {
+      val m = re("(\\3)|abc").findFirstMatchIn("abc").get
+      m.matched shouldBe "abc"
+      // Group 1 never fires because the first alt always fails.
+      m.group(1) shouldBe None
+    }
+
+    "(\\3)|(\\w+) — group 2 captures via the fallback arm" in {
+      // The first alt tries `\3` (group 3 doesn't exist) → always
+      // fails. The second alt captures the word into group 2.
+      val m = re("(\\3)|(\\w+)").findFirstMatchIn("hello").get
+      m.matched shouldBe "hello"
+      m.group(1) shouldBe None
+      m.group(2) shouldBe Some("hello")
+    }
+
+    "(a)\\2 — backref past the declared count always fails" in {
+      // No match anywhere — the backref is unsatisfiable regardless
+      // of input.
+      findFirst("(a)\\2", "a") shouldBe None
+      findFirst("(a)\\2", "aa") shouldBe None
+      findFirst("(a)\\2", "abc") shouldBe None
+    }
+
+    "\\1 with no groups at all always fails" in {
+      // Slot index 2 is past the slot array (sized 2 for group 0
+      // only). The VM bounds-checks and backtracks immediately.
+      findFirst("\\1", "anything") shouldBe None
+      findFirst("\\1abc", "abc") shouldBe None
+    }
+
+    "^\\s*(\\2)(?![A-Za-z0-9_])  — corpus pattern compiles and runs" in {
+      // From the TextMate corpus (CompileCorpusSpec used to count
+      // this as a failing pattern). The leading group is `(\2)`, so
+      // group 1's body is the backref to group 2 — which doesn't
+      // exist. The first arm of any match attempt always fails the
+      // backref, the overall pattern never matches.
+      val r = re("^\\s*(\\2)(?![A-Za-z0-9_])")
+      r.findFirstMatchIn("  xyz")        shouldBe None
+      r.findFirstMatchIn("xyz")          shouldBe None
+      r.findFirstMatchIn("")             shouldBe None
+    }
+
+    "(\\3)|(?=$|\\*/) — corpus pattern compiles and runs" in {
+      // From the TextMate corpus. First alt always fails (`\3` →
+      // out of range). Second alt is a positive lookahead for either
+      // end-of-input or `*/`. The scan walks forward until one of
+      // them fires — at the end of input, `$` matches, giving a
+      // zero-width match at sp=length.
+      val r = re("(\\3)|(?=$|\\*/)")
+      val m = r.findFirstMatchIn("abc").get
+      m.start shouldBe 3
+      m.end   shouldBe 3
+      m.group(1) shouldBe None
+      // The same pattern fires zero-width right before `*/`.
+      val m2 = r.findFirstMatchIn("foo*/bar").get
+      m2.start shouldBe 3
+      m2.end   shouldBe 3
+    }
+  }
+
 end MatchBackrefSpec
