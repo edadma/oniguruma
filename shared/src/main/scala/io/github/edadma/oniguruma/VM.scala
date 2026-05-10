@@ -127,6 +127,26 @@ final class VM(program: Program):
     while !done && steps < StepLimit do
       steps += 1
 
+      // Cooperative cancellation: poll the JVM interrupt flag every
+      // 65k steps so a caller running the VM on a worker thread can
+      // kill a runaway match by calling `Thread.interrupt()`. The
+      // mask check is a single AND, so the per-step cost is one
+      // branch-on-zero and a constant compare — invisible in
+      // benchmarks but it converts a hung VM into a thrown
+      // InterruptedException within microseconds of the interrupt.
+      // Without this, the StepLimit (10M steps) is the only out, and
+      // a pathological pattern can pin a CPU for many seconds before
+      // it hits that ceiling. The exception propagates up through
+      // `runOne` / `run` / `Regex.findFirstMatchIn` / TmScanner and
+      // is the caller's signal to abandon the match.
+      //
+      // On platforms where Thread.interrupted() is a no-op stub
+      // (Scala.js, Scala Native), the check returns false and the VM
+      // runs as before — those backends don't have the multi-thread
+      // hung-call problem.
+      if (steps & 0xFFFF) == 0 && Thread.interrupted() then
+        throw new InterruptedException("oniguruma VM interrupted")
+
       // Subroutine-call return: if the top IP frame's `leaveAt` matches
       // the current pc, pop it before dispatching. Restores the slot
       // array (PCRE-`(?R)`-style: subroutine calls don't propagate
