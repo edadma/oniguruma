@@ -38,6 +38,21 @@ object UCDProperty:
   /** `\p{Print}` — printable: L | M | N | P | S | Zs. */
   lazy val Print: IntervalSet = buildSet(isPrintCategory)
 
+  /** **The set `\b` is about**, which is NOT the set `\w` is about — `L | M | N | Pc`.
+   *
+   * Onig keeps the two apart and this is the only place that shows: `\w` is ASCII, so `Á` does not
+   * match it, and `\b` is Unicode, so there is no boundary either side of `Á` in `xÁy`. Measured
+   * against Onig itself rather than reasoned about — Ruby's regexes are Onig, and it answers `none`
+   * for `x\bÁ`, for `caf\bé`, for `a\b٣`, for a combining mark and for `a\b名`, while answering
+   * `boundary` for a space and for `-`. `\p{N}` rather than the decimal digits alone, and `Pc`
+   * rather than `_` alone, for the same reason: `Ⅷ`, `¹` and `‿` all answer `none` there, and `$`
+   * answers `boundary`.
+   *
+   * That is UTS #18's word definition, which is what an encoding-aware `ONIGENC_IS_CODE_WORD`
+   * amounts to for UTF-8.
+   */
+  lazy val BoundaryWord: IntervalSet = buildSet(isBoundaryWordCategory)
+
   private inline def isLetterCategory(t: Int): Boolean =
     t == Character.UPPERCASE_LETTER       ||
       t == Character.LOWERCASE_LETTER     ||
@@ -54,6 +69,10 @@ object UCDProperty:
     t == Character.DECIMAL_DIGIT_NUMBER   ||
       t == Character.LETTER_NUMBER        ||
       t == Character.OTHER_NUMBER
+
+  private inline def isBoundaryWordCategory(t: Int): Boolean =
+    isLetterCategory(t) || isMarkCategory(t) || isNumberCategory(t) ||
+      t == Character.CONNECTOR_PUNCTUATION
 
   private inline def isPunctCategory(t: Int): Boolean =
     t == Character.CONNECTOR_PUNCTUATION  ||

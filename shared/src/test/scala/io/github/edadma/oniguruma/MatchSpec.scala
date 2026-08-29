@@ -234,6 +234,52 @@ class MatchSpec extends CompilerHelpers:
       findFirst("\\bfoo\\b", "barfoo") shouldBe None
     }
 
+    /** **`\b` IS UNICODE WHILE `\w` IS ASCII, AND ONIG KEEPS THE TWO APART.** This is the one place
+      * that difference is observable, and tying them together — which is the obvious reading of
+      * "the boundary is where word-ness flips" — is a divergence rather than a simplification.
+      *
+      * Every line here was **measured against Onig itself** rather than reasoned about: Ruby's
+      * regexes are Onig, and each of these was run there first. That matters because the answers are
+      * not what `\w` would predict.
+      *
+      * What it costs when it is wrong is a TextMate grammar's keywords, which is how it was found: a
+      * `\bkeyword\b` picks up a false hit *inside* an identifier wherever the script changes, so
+      * `síif` styles `if` and `realíssimo` styles `real` in any language whose identifiers are not
+      * ASCII.
+      */
+    "\\b is Unicode-aware even though \\w is not" in {
+      // `\w` stays ASCII: this is the half that must NOT move.
+      findFirst("\\w", "Á") shouldBe None
+
+      // ...and `\b` does not follow it. There is no boundary either side of a letter outside ASCII,
+      // so none of these has one to match at.
+      findFirst("x\\bÁ", "xÁy") shouldBe None
+      findFirst("caf\\bé", "café") shouldBe None
+      findFirst("a\\b名", "a名") shouldBe None
+
+      // A boundary in FRONT of such a name is real, which is the direction a grammar needs.
+      firstMatch("\\bÁrbol", "x Árbol") shouldBe "Árbol"
+      firstMatch("\\bcafé\\b", "un café ahora") shouldBe "café"
+
+      // The set is `L | M | N | Pc` rather than the letters and the decimal digits: a mark, a
+      // letter-number, an other-number and a connector are all word, and a currency symbol is not.
+      findFirst("a\\b٣", "a٣") shouldBe None
+      findFirst("a\\bⅧ", "aⅧ") shouldBe None
+      findFirst("a\\b¹", "a¹") shouldBe None
+      findFirst("a\\b\u203f", "a\u203f") shouldBe None
+      firstMatch("a\\b", "a$") shouldBe "a"
+
+      // And what has always been a boundary still is.
+      firstMatch("a\\b", "a b") shouldBe "a"
+      firstMatch("a\\b", "a-b") shouldBe "a"
+    }
+
+    /** The negative form follows the same set, so a non-boundary inside a non-ASCII word is one. */
+    "\\B follows the same Unicode set" in {
+      firstMatch("x\\BÁ", "xÁy") shouldBe "xÁ"
+      findFirst("\\BÁrbol", "x Árbol") shouldBe None
+    }
+
     "\\B non-word-boundary" in {
       // Should NOT match on a word boundary. 'foo' inside 'foobar' is
       // bordered by word chars, so \Bfoo\B works there.

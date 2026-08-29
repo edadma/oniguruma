@@ -504,22 +504,25 @@ final class VM(program: Program):
 
   /** A boundary is wherever the "word-ness" flips between the
     * codepoint immediately before `sp` and the one immediately at `sp`,
-    * with input boundaries treated as non-word. The word-set definition
-    * matches the parser's `\w` (ASCII: `[A-Za-z0-9_]`). */
+    * with input boundaries treated as non-word.
+    *
+    * **THE SET IS `UCDProperty.BoundaryWord` AND NOT THE PARSER'S `\w`, WHICH IS THE ONE PLACE
+    * ONIG KEEPS TWO WORD-SETS APART.** `\w` is ASCII — `Á` does not match it — and `\b` is
+    * Unicode, so `xÁy` has no boundary either side of the `Á`. Tying the two together looks like
+    * consistency and is a divergence: it makes `\b` fire *inside* a word wherever the script
+    * changes, and fail to fire in front of a name that begins with a letter outside ASCII.
+    *
+    * It costs a TextMate grammar its keywords, which is how it was found: every `\bkeyword\b`
+    * picks up a false hit inside an identifier — `síif` styling `if`, `realíssimo` styling `real` —
+    * on any language whose identifiers are not ASCII. */
   private def wordBoundary(input: String, sp: Int): Boolean =
     val left =
       if sp == 0 then false
-      else isWord(Character.codePointBefore(input, sp))
+      else UCDProperty.BoundaryWord.contains(Character.codePointBefore(input, sp))
     val right =
       if sp >= input.length then false
-      else isWord(Character.codePointAt(input, sp))
+      else UCDProperty.BoundaryWord.contains(Character.codePointAt(input, sp))
     left != right
-
-  private inline def isWord(cp: Int): Boolean =
-    (cp >= '0' && cp <= '9') ||
-      (cp >= 'A' && cp <= 'Z') ||
-      (cp >= 'a' && cp <= 'z') ||
-      cp == '_'
 
 end VM
 
